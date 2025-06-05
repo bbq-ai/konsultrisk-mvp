@@ -5,6 +5,8 @@ from sklearn.ensemble import RandomForestClassifier
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import classification_report
 import matplotlib.pyplot as plt
+from datetime import datetime, timedelta
+import plotly.express as px
 
 st.set_page_config(page_title="Konsultriskanalys", layout="wide")
 st.title("🔍 Konsultriskanalys – MVP")
@@ -12,6 +14,7 @@ st.title("🔍 Konsultriskanalys – MVP")
 # Dummydata
 def generate_dummy_data(n=100):
     np.random.seed(42)
+    start_date = datetime.today()
     df = pd.DataFrame({
         'Konsult': [f'Konsult {i+1}' for i in range(n)],
         'Dagar kvar på uppdrag': np.random.randint(0, 90, n),
@@ -19,9 +22,12 @@ def generate_dummy_data(n=100):
         'Kompetensmatch (0-1)': np.round(np.random.rand(n), 2),
         'Aktiva säljcase': np.random.randint(0, 3, n),
         'Faktureringsgrad (%)': np.random.randint(40, 101, n),
+        'Förväntad ledtid (dagar)': np.random.randint(5, 30, n),
     })
     df['Risk (1=risk, 0=ingen risk)'] = ((df['Dagar kvar på uppdrag'] < 15) & (df['Aktiva säljcase'] == 0)).astype(int)
-    df['Förväntad ledtid (dagar)'] = np.random.randint(5, 30, n)
+    df['Slutdatum uppdrag'] = [start_date + timedelta(days=int(x)) for x in df['Dagar kvar på uppdrag']]
+    df['Rekommenderad åtgärdsdag'] = df['Slutdatum uppdrag'] - pd.to_timedelta(df['Förväntad ledtid (dagar)'], unit='d')
+    df['Startdatum uppdrag'] = df['Slutdatum uppdrag'] - pd.to_timedelta(np.random.randint(30, 180, n), unit='d')
     return df
 
 # Ladda data
@@ -33,14 +39,17 @@ if data_option == "Generera testdata":
 else:
     uploaded_file = st.sidebar.file_uploader("Ladda upp CSV-fil", type="csv")
     if uploaded_file is not None:
-        df = pd.read_csv(uploaded_file)
+        df = pd.read_csv(uploaded_file, parse_dates=['Startdatum uppdrag', 'Slutdatum uppdrag', 'Rekommenderad åtgärdsdag'])
     else:
         st.warning("Vänligen ladda upp en CSV-fil.")
         st.stop()
 
+# Färgkoda risknivåer
+risk_colors = df['Predikterad risk'].map({1: 'background-color: #ffa07a', 0: ''})
+
 # Visa data
 st.subheader("📊 Konsultdata")
-st.dataframe(df)
+st.dataframe(df.style.apply(lambda _: risk_colors, axis=1))
 
 # Modell 1: Riskprediktion
 st.subheader("🤖 Modell 1 – Riskprediktion")
@@ -58,31 +67,66 @@ model.fit(X_train, y_train)
 df['Predikterad risk'] = model.predict(X)
 df['Riskprocent (%)'] = (model.predict_proba(X)[:, 1] * 100).round(1)
 
-# Modell 2: När bör man agera?
-st.subheader("⏰ Modell 2 – Rekommenderad åtgärdstidpunkt")
+# Interaktiv simulator
+st.subheader("🧪 Simulera konsult")
+with st.expander("Skapa egen konsultprofil"):
+    dagar_kvar = st.slider("Dagar kvar på uppdrag", 0, 120, 30)
+    fakt = st.slider("Faktureringsgrad (%)", 0, 100, 80)
+    lediga_perioder = st.slider("Tidigare lediga perioder", 0, 10, 2)
+    kompetensmatch = st.slider("Kompetensmatch", 0.0, 1.0, 0.7)
+    saljcase = st.slider("Aktiva säljcase", 0, 5, 1)
+    ledtid = st.slider("Förväntad ledtid (dagar)", 1, 60, 14)
 
-def calculate_action_day(row):
-    return max(row['Dagar kvar på uppdrag'] - row['Förväntad ledtid (dagar)'], 0)
-
-df['Rekommenderad åtgärdsdag'] = df.apply(calculate_action_day, axis=1)
+    sim_df = pd.DataFrame([[dagar_kvar, lediga_perioder, kompetensmatch, saljcase, fakt]],
+                          columns=X.columns)
+    sim_pred = model.predict(sim_df)[0]
+    sim_prob = model.predict_proba(sim_df)[0][1] * 100
+    åtgärdsdatum = datetime.today() + timedelta(days=dagar_kvar - ledtid)
+    st.markdown(f"**Riskprocent:** {sim_prob:.1f}%")
+    st.markdown(f"**Rekommenderad åtgärdsdag:** {åtgärdsdatum.date()} ({(åtgärdsdatum - datetime.today()).days} dagar från idag)")
+    st.markdown(f"**Riskkategori:** {'⚠️ Risk' if sim_pred == 1 else '✅ Ingen uppenbar risk'}")
 
 # Visualisering
-st.subheader("📈 Visualisering av risk och åtgärdstid")
+st.subheader("📈 Visualisering av risk och åtgärdsdatum")
 fig, ax = plt.subplots()
-ax.scatter(df['Dagar kvar på uppdrag'], df['Riskprocent (%)'], c=df['Predikterad risk'], cmap='coolwarm', label='Risk')
-ax.set_xlabel('Dagar kvar på uppdrag')
+ax.scatter(df['Slutdatum uppdrag'], df['Riskprocent (%)'], c=df['Predikterad risk'], cmap='coolwarm')
+ax.set_xlabel('Slutdatum uppdrag')
 ax.set_ylabel('Riskprocent (%)')
-ax.set_title('Risknivå beroende på uppdragets längd')
+ax.set_title('Risknivå över tid')
+plt.xticks(rotation=45)
 st.pyplot(fig)
+
+# Gantt-diagram
+st.subheader("🗓️ Tidslinje: Start, Slut och Åtgärdsdag")
+gantt_df = df[['Konsult', 'Startdatum uppdrag', 'Slutdatum uppdrag', 'Rekommenderad åtgärdsdag']].copy()
+gantt_long = pd.melt(gantt_df, id_vars='Konsult', var_name='Typ', value_name='Datum')
+fig_gantt = px.timeline(gantt_long, x_start='Datum', x_end='Datum', y='Konsult', color='Typ', title='Tidslinje per konsult', hover_name='Konsult')
+fig_gantt.update_yaxes(autorange="reversed")
+st.plotly_chart(fig_gantt, use_container_width=True)
+
+# Summering och filter
+st.subheader("📋 Sammanfattning och filtrering")
+today = datetime.today()
+df['Åtgärd inom 7 dagar'] = (df['Rekommenderad åtgärdsdag'] <= today + timedelta(days=7))
+antal_akuta = df['Åtgärd inom 7 dagar'].sum()
+st.info(f"🔔 {antal_akuta} konsulter behöver åtgärd inom 7 dagar")
+
+val = st.selectbox("Filtrera på risknivå:", ["Visa alla", "Endast risk", "Åtgärd inom 7 dagar"])
+if val == "Endast risk":
+    df_visning = df[df['Predikterad risk'] == 1]
+elif val == "Åtgärd inom 7 dagar":
+    df_visning = df[df['Åtgärd inom 7 dagar'] == True]
+else:
+    df_visning = df
 
 # Visa slutresultat
 st.subheader("📌 Resultat")
-st.dataframe(df[['Konsult', 'Dagar kvar på uppdrag', 'Faktureringsgrad (%)', 'Riskprocent (%)', 'Predikterad risk', 'Rekommenderad åtgärdsdag']].sort_values(by='Riskprocent (%)', ascending=False))
+st.dataframe(df_visning[['Konsult', 'Startdatum uppdrag', 'Slutdatum uppdrag', 'Faktureringsgrad (%)', 'Riskprocent (%)', 'Predikterad risk', 'Rekommenderad åtgärdsdag']].sort_values(by='Riskprocent (%)', ascending=False))
+
+# Export
+st.download_button("📤 Ladda ner resultat som CSV", df_visning.to_csv(index=False), file_name="konsultrisk_resultat.csv")
 
 # Modellutvärdering
 st.subheader("📉 Modellutvärdering")
 y_pred = model.predict(X_test)
 st.text(classification_report(y_test, y_pred))
-
-# Export
-st.download_button("📤 Ladda ner resultat som CSV", df.to_csv(index=False), file_name="konsultrisk_resultat.csv")
