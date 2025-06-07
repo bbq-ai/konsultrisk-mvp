@@ -44,13 +44,6 @@ else:
         st.warning("Vänligen ladda upp en CSV-fil.")
         st.stop()
 
-# Färgkoda risknivåer
-risk_colors = df['Predikterad risk'].map({1: 'background-color: #ffa07a', 0: ''})
-
-# Visa data
-st.subheader("📊 Konsultdata")
-st.dataframe(df.style.apply(lambda _: risk_colors, axis=1))
-
 # Modell 1: Riskprediktion
 st.subheader("🤖 Modell 1 – Riskprediktion")
 if 'Risk (1=risk, 0=ingen risk)' not in df.columns:
@@ -66,6 +59,9 @@ model.fit(X_train, y_train)
 
 df['Predikterad risk'] = model.predict(X)
 df['Riskprocent (%)'] = (model.predict_proba(X)[:, 1] * 100).round(1)
+
+# Färgkoda efter risk
+risk_colors = df['Predikterad risk'].map({1: 'background-color: #ffa07a', 0: ''})
 
 # Interaktiv simulator
 st.subheader("🧪 Simulera konsult")
@@ -119,9 +115,9 @@ elif val == "Åtgärd inom 7 dagar":
 else:
     df_visning = df
 
-# Visa slutresultat
+# Visa resultat
 st.subheader("📌 Resultat")
-st.dataframe(df_visning[['Konsult', 'Startdatum uppdrag', 'Slutdatum uppdrag', 'Faktureringsgrad (%)', 'Riskprocent (%)', 'Predikterad risk', 'Rekommenderad åtgärdsdag']].sort_values(by='Riskprocent (%)', ascending=False))
+st.dataframe(df_visning[['Konsult', 'Startdatum uppdrag', 'Slutdatum uppdrag', 'Faktureringsgrad (%)', 'Riskprocent (%)', 'Predikterad risk', 'Rekommenderad åtgärdsdag']].style.apply(lambda _: risk_colors, axis=1))
 
 # Export
 st.download_button("📤 Ladda ner resultat som CSV", df_visning.to_csv(index=False), file_name="konsultrisk_resultat.csv")
