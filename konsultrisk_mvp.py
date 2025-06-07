@@ -90,10 +90,9 @@ plt.xticks(rotation=45)
 st.pyplot(fig)
 
 # Gantt-diagram
-st.subheader("🗓️ Tidslinje: Start, Slut och Åtgärdsdag")
 gantt_df = df[['Konsult', 'Startdatum uppdrag', 'Slutdatum uppdrag', 'Rekommenderad åtgärdsdag']].copy()
 gantt_long = pd.melt(gantt_df, id_vars='Konsult', var_name='Typ', value_name='Datum')
-fig_gantt = px.timeline(gantt_long, x_start='Datum', x_end='Datum', y='Konsult', color='Typ', title='Tidslinje per konsult', hover_name='Konsult')
+fig_gantt = px.timeline(gantt_long, x_start='Datum', x_end='Datum', y='Konsult', color='Typ', title='🗓️ Tidslinje per konsult', hover_name='Konsult')
 fig_gantt.update_yaxes(autorange="reversed")
 st.plotly_chart(fig_gantt, use_container_width=True)
 
@@ -112,12 +111,16 @@ elif val == "Åtgärd inom 7 dagar":
 else:
     df_visning = df
 
-# Visa resultat
+# Visa resultat – med stabil färgmarkering
 st.subheader("📌 Resultat")
-filtered_colors = df_visning['Predikterad risk'].map({1: 'background-color: #ffa07a', 0: ''})
-st.dataframe(df_visning[['Konsult', 'Startdatum uppdrag', 'Slutdatum uppdrag', 'Faktureringsgrad (%)',
-                         'Riskprocent (%)', 'Predikterad risk', 'Rekommenderad åtgärdsdag']].style.apply(
-    lambda _: filtered_colors, axis=1))
+def highlight_risk(val):
+    return 'background-color: #ffa07a' if val == 1 else ''
+
+styled_df = df_visning[['Konsult', 'Startdatum uppdrag', 'Slutdatum uppdrag',
+                        'Faktureringsgrad (%)', 'Riskprocent (%)',
+                        'Predikterad risk', 'Rekommenderad åtgärdsdag']].style
+styled_df = styled_df.applymap(highlight_risk, subset=['Predikterad risk'])
+st.dataframe(styled_df)
 
 # Export
 st.download_button("📤 Ladda ner resultat som CSV", df_visning.to_csv(index=False), file_name="konsultrisk_resultat.csv")
